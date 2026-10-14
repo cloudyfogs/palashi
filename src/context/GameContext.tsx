@@ -17,6 +17,7 @@ import {
   NightVision,
 } from "@/utils/gameLogic";
 import { SQUAD_SIZES } from "@/constants/rules";
+import { PEER_CONFIG } from "@/constants/network";
 import { playClickSound, playVoteSound, playSuccessSound, playFailSound, playTickSound } from "@/utils/sound";
 import { botNominateSquad, botCastVote, botChooseMissionAction, botIdentifyMirMadan } from "@/utils/botAI";
 import confetti from "canvas-confetti";
@@ -789,132 +790,190 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       setGameState(state);
-      setConnectionStatus("connected");
 
       if (!isHotseatMode) {
+        setConnectionStatus("connecting");
         try {
           const { default: Peer } = await import("peerjs");
-          const peer = new Peer(`palashi-${code}`);
-          peerRef.current = peer;
 
-          peer.on("open", () => {
-            setConnectionStatus("connected");
-          });
+          const initHostPeer = (roomCodeAttempt: string) => {
+            const peer = new Peer(`palashi-${roomCodeAttempt}`, PEER_CONFIG);
+            peerRef.current = peer;
 
-          peer.on("connection", (conn) => {
-            conn.on("open", () => {
-              connectionsRef.current.set(conn.peer, conn);
+            peer.on("open", () => {
+              setConnectionStatus("connected");
+              setRoomCode(roomCodeAttempt);
+              setErrorMessage(null);
             });
 
-            conn.on("data", (data: any) => {
-              if (data.type === "JOIN_ROOM") {
-                const newPlayer: Player = {
-                  id: conn.peer,
-                  name: data.player.name,
-                  isHost: false,
-                  avatarIndex: data.player.avatarIndex,
-                  isConnected: true,
-                };
+            peer.on("connection", (conn) => {
+              conn.on("open", () => {
+                connectionsRef.current.set(conn.peer, conn);
+              });
+
+              conn.on("data", (data: any) => {
+                if (data.type === "JOIN_ROOM") {
+                  const newPlayer: Player = {
+                    id: conn.peer,
+                    name: data.player.name,
+                    isHost: false,
+                    avatarIndex: data.player.avatarIndex,
+                    isConnected: true,
+                  };
+                  setGameState((prev) => {
+                    if (!prev) return prev;
+                    if (prev.players.length >= prev.settings.playerCount) {
+                      conn.send({ type: "ERROR", message: "রুমটি ইতিমধ্যেই পূর্ণ হয়ে গেছে!" });
+                      return prev;
+                    }
+                    const updatedPlayers = [...prev.players, newPlayer];
+                    const nextState: GameState = {
+                      ...prev,
+                      players: updatedPlayers,
+                    };
+                    broadcastState(nextState);
+                    return nextState;
+                  });
+                } else {
+                  handleHostAction(data as ClientAction);
+                }
+              });
+
+              conn.on("close", () => {
+                connectionsRef.current.delete(conn.peer);
                 setGameState((prev) => {
                   if (!prev) return prev;
-                  if (prev.players.length >= prev.settings.playerCount) {
-                    conn.send({ type: "ERROR", message: "Room is full!" });
-                    return prev;
-                  }
-                  const updatedPlayers = [...prev.players, newPlayer];
-                  const nextState: GameState = {
-                    ...prev,
-                    players: updatedPlayers,
-                  };
-                  broadcastState(nextState);
-                  return nextState;
+                  const updatedPlayers = prev.players.map((p) =>
+                    p.id === conn.peer ? { ...p, isConnected: false } : p
+                  );
+                  return { ...prev, players: updatedPlayers };
                 });
-              } else {
-                handleHostAction(data as ClientAction);
-              }
-            });
-
-            conn.on("close", () => {
-              connectionsRef.current.delete(conn.peer);
-              setGameState((prev) => {
-                if (!prev) return prev;
-                const updatedPlayers = prev.players.map((p) =>
-                  p.id === conn.peer ? { ...p, isConnected: false } : p
-                );
-                return { ...prev, players: updatedPlayers };
               });
             });
-          });
 
-          peer.on("error", (err) => {
-            console.error("Peer error:", err);
-            setErrorMessage("Connection error: " + err.message);
-          });
-        } catch (err) {
+            peer.on("error", (err: any) => {
+              console.error("Host Peer error:", err);
+              if (err.type === "unavailable-id") {
+                // If ID is already taken on 0.peerjs.com, generate a fresh code and retry
+                const newCode = generateRoomCode();
+                peer.destroy();
+                initHostPeer(newCode);
+              } else {
+                setErrorMessage("হোস্ট সংযোগে ত্রুটি: " + err.message);
+                setConnectionStatus("error");
+              }
+            });
+          };
+
+          initHostPeer(code);
+        } catch (err: any) {
           console.error("Failed to load PeerJS:", err);
+          setErrorMessage("PeerJS লোড করতে ব্যর্থ হয়েছে: " + err.message);
+          setConnectionStatus("error");
         }
+      } else {
+        setConnectionStatus("connected");
       }
     },
     [broadcastState, handleHostAction]
   );
 
-  // Join Room (Client)
+  // Join Room (Client) with Auto-Retry and OpenRelay TURN support
   const joinRoom = useCallback(async (code: string, playerName: string) => {
     const formattedCode = code.trim().toUpperCase();
     setRoomCode(formattedCode);
     setConnectionStatus("connecting");
-    setErrorMessage(null);
+    setErrorMessage("সার্ভারের সাথে সংযুক্ত হচ্ছে...");
 
     try {
       const { default: Peer } = await import("peerjs");
-      const clientPeer = new Peer();
+      const clientPeer = new Peer(PEER_CONFIG);
       peerRef.current = clientPeer;
 
       clientPeer.on("open", (clientId) => {
         setLocalPlayerIdState(clientId);
-        const conn = clientPeer.connect(`palashi-${formattedCode}`);
-        hostConnRef.current = conn;
 
-        conn.on("open", () => {
-          setConnectionStatus("connected");
-          conn.send({
-            type: "JOIN_ROOM",
-            player: {
-              id: clientId,
-              name: playerName.trim() || `Player-${clientId.slice(0, 4)}`,
-              avatarIndex: Math.floor(Math.random() * 6),
-              isConnected: true,
-            },
+        let attempt = 0;
+        const maxAttempts = 5;
+        let isSuccessfullyConnected = false;
+
+        const attemptConnect = () => {
+          if (isSuccessfullyConnected) return;
+          attempt++;
+
+          setErrorMessage(`রুমে প্রবেশের চেষ্টা করা হচ্ছে... (${attempt}/${maxAttempts})`);
+
+          const conn = clientPeer.connect(`palashi-${formattedCode}`, {
+            reliable: true,
           });
-        });
+          hostConnRef.current = conn;
 
-        conn.on("data", (data: any) => {
-          if (data.type === "SYNC_STATE") {
-            setGameState(data.state);
-          } else if (data.type === "ERROR") {
-            setErrorMessage(data.message);
-            setConnectionStatus("error");
-          }
-        });
+          conn.on("open", () => {
+            isSuccessfullyConnected = true;
+            setConnectionStatus("connected");
+            setErrorMessage(null);
+            conn.send({
+              type: "JOIN_ROOM",
+              player: {
+                id: clientId,
+                name: playerName.trim() || `Player-${clientId.slice(0, 4)}`,
+                avatarIndex: Math.floor(Math.random() * 6),
+                isConnected: true,
+              },
+            });
+          });
 
-        conn.on("close", () => {
-          setConnectionStatus("disconnected");
-          setErrorMessage("Disconnected from Host.");
-        });
+          conn.on("data", (data: any) => {
+            if (data.type === "SYNC_STATE") {
+              setGameState(data.state);
+            } else if (data.type === "ERROR") {
+              setErrorMessage(data.message);
+              setConnectionStatus("error");
+            }
+          });
 
-        conn.on("error", (err) => {
-          setConnectionStatus("error");
-          setErrorMessage("Connection error: " + err);
-        });
+          conn.on("close", () => {
+            setConnectionStatus("disconnected");
+            setErrorMessage("হোস্টের সাথে সংযোগ বিচ্ছিন্ন হয়েছে।");
+          });
+
+          conn.on("error", (err) => {
+            console.warn(`Connection attempt ${attempt} error:`, err);
+            if (!isSuccessfullyConnected && attempt < maxAttempts) {
+              setTimeout(attemptConnect, 1800);
+            } else if (!isSuccessfullyConnected) {
+              setConnectionStatus("error");
+              setErrorMessage(`রুম কোড "${formattedCode}" খুঁজে পাওয়া যায়নি। হোস্ট কি রুমে অপেক্ষা করছেন?`);
+            }
+          });
+
+          // Timeout check for slow signaling
+          setTimeout(() => {
+            if (!isSuccessfullyConnected && attempt < maxAttempts && !conn.open) {
+              conn.close();
+              attemptConnect();
+            } else if (!isSuccessfullyConnected && !conn.open) {
+              setConnectionStatus("error");
+              setErrorMessage(`রুম কোড "${formattedCode}" খুঁজে পাওয়া যায়নি। হোস্টের রুম কোড সঠিক কিনা যাচাই করুন।`);
+            }
+          }, 4000);
+        };
+
+        attemptConnect();
       });
 
-      clientPeer.on("error", (err) => {
+      clientPeer.on("error", (err: any) => {
+        console.error("Client Peer general error:", err);
+        if (err.type === "peer-unavailable") {
+          setErrorMessage(`রুম "${formattedCode}" খুঁজে পাওয়া যায়নি। হোস্ট রুম খোলা রেখেছেন কিনা নিশ্চিত করুন।`);
+        } else {
+          setErrorMessage("সংযোগ ত্রুটি: " + err.message);
+        }
         setConnectionStatus("error");
-        setErrorMessage("Room not found or Host disconnected: " + err.message);
       });
     } catch (err: any) {
       setConnectionStatus("error");
-      setErrorMessage("Could not connect to PeerJS network: " + err.message);
+      setErrorMessage("PeerJS নেটওয়ার্কে সংযোগ করা যায়নি: " + err.message);
     }
   }, []);
 
