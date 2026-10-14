@@ -9,6 +9,8 @@ interface CardViewProps {
   faction?: Faction;
   isPeekable?: boolean;
   className?: string;
+  isFlipped?: boolean;
+  onFlipChange?: (flipped: boolean) => void;
 }
 
 export const CardView: React.FC<CardViewProps> = ({
@@ -16,8 +18,18 @@ export const CardView: React.FC<CardViewProps> = ({
   faction,
   isPeekable = true,
   className = "",
+  isFlipped: controlledFlipped,
+  onFlipChange,
 }) => {
-  const [isFlipped, setIsFlipped] = useState(!isPeekable);
+  const [internalFlipped, setInternalFlipped] = useState(!isPeekable);
+  const isFlipped = controlledFlipped !== undefined ? controlledFlipped : internalFlipped;
+
+  const handleCardClick = () => {
+    if (!isPeekable) return;
+    const next = !isFlipped;
+    setInternalFlipped(next);
+    onFlipChange?.(next);
+  };
 
   const effectiveFaction = character?.faction || faction || "NAWAB";
   const isNawab = effectiveFaction === "NAWAB";
@@ -52,7 +64,7 @@ export const CardView: React.FC<CardViewProps> = ({
     <div className={`flex flex-col items-center select-none ${className}`}>
       {/* 3D Flip Card Container */}
       <div
-        onClick={() => isPeekable && setIsFlipped(!isFlipped)}
+        onClick={handleCardClick}
         className="w-64 sm:w-72 h-[380px] sm:h-[420px] cursor-pointer group perspective-1000"
       >
         <div
@@ -182,7 +194,7 @@ export const CardView: React.FC<CardViewProps> = ({
       {/* Quick Action Hint */}
       {isPeekable && (
         <button
-          onClick={() => setIsFlipped(!isFlipped)}
+          onClick={handleCardClick}
           className="mt-2 text-xs font-semibold text-amber-300/80 hover:text-amber-200 flex items-center gap-1.5 transition-colors"
         >
           {isFlipped ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}

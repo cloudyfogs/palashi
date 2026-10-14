@@ -1,12 +1,13 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { CardView } from "@/components/CardView";
-import { Moon, Eye, ShieldCheck, Skull, Check } from "lucide-react";
+import { Moon, Eye, EyeOff, ShieldCheck, Skull, Check } from "lucide-react";
 
 export const NightPhaseView: React.FC = () => {
   const { gameState, localPlayer, nightVision, dispatchAction } = useGame();
+  const [isCardRevealed, setIsCardRevealed] = useState(false);
 
   if (!gameState || !localPlayer) return null;
 
@@ -39,94 +40,113 @@ export const NightPhaseView: React.FC = () => {
         </p>
       </div>
 
-      {/* Physical Playing Card */}
+      {/* Physical Playing Card with Controlled Flip */}
       <CardView
         character={localPlayer.character}
         faction={localPlayer.faction}
         isPeekable={true}
+        isFlipped={isCardRevealed}
+        onFlipChange={setIsCardRevealed}
       />
 
-      {/* Night Intelligence Box (Concise) */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-2">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-          <Eye className="w-3.5 h-3.5" /> রাতের গোপন তথ্য:
-        </h4>
+      {/* Night Intelligence Box - Revealed ONLY AFTER card is flipped */}
+      {isCardRevealed ? (
+        <div className="bg-slate-900/90 border-2 border-indigo-600/50 rounded-2xl p-4 shadow-xl space-y-2 animate-in fade-in duration-300">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+            <Eye className="w-3.5 h-3.5 text-amber-400" /> রাতের গোপন তথ্য ও সহযোগী:
+          </h4>
 
-        {/* 1. Mir Madan */}
-        {charId === "mir_madan" && (
-          <div className="space-y-1.5 text-xs">
-            <p className="text-slate-300">চিহ্নিত কোম্পানি চক্রান্তকারী (রায় দুর্লভ ছাড়া):</p>
-            <div className="flex flex-wrap gap-2">
-              {nightVision?.knownConspirators?.map((c) => (
-                <span
-                  key={c.id}
-                  className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"
-                >
-                  <Skull className="w-3 h-3 text-rose-400" /> {c.name}
-                </span>
-              ))}
+          {/* 1. Mir Madan */}
+          {charId === "mir_madan" && (
+            <div className="space-y-1.5 text-xs">
+              <p className="text-slate-300">চিহ্নিত কোম্পানি চক্রান্তকারী (রায় দুর্লভ ছাড়া):</p>
+              <div className="flex flex-wrap gap-2">
+                {nightVision?.knownConspirators?.map((c) => (
+                  <span
+                    key={c.id}
+                    className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"
+                  >
+                    <Skull className="w-3 h-3 text-rose-400" /> {c.name}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[10px] text-amber-400 font-semibold pt-1">
+                ⚠️ মীর মদন হিসেবে নিজের পরিচয় গোপন রাখুন!
+              </p>
             </div>
-            <p className="text-[10px] text-amber-400 font-semibold pt-1">
-              ⚠️ মীর মদন হিসেবে নিজের পরিচয় গোপন রাখুন!
+          )}
+
+          {/* 2. Mohan Lal */}
+          {charId === "mohan_lal" && (
+            <div className="space-y-1.5 text-xs">
+              <p className="text-slate-300">মীর মদন প্রার্থী (একজন আসল, একজন ঘষেটি বেগম):</p>
+              <div className="flex flex-wrap gap-2">
+                {nightVision?.mirMadanCandidates?.map((c, i) => (
+                  <span
+                    key={c.id}
+                    className="px-3 py-1 rounded-lg bg-amber-950/70 border border-amber-600/60 text-amber-200 font-bold"
+                  >
+                    প্রার্থী {i + 1}: {c.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 3. Regular EIC */}
+          {localPlayer.faction === "EIC" && charId !== "umichand" && (
+            <div className="space-y-1.5 text-xs">
+              <p className="text-slate-300">আপনার সহযোগী কোম্পানি চক্রান্তকারী:</p>
+              <div className="flex flex-wrap gap-2">
+                {nightVision?.fellowEicMembers?.map((m) => (
+                  <span
+                    key={m.id}
+                    className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"
+                  >
+                    <Skull className="w-3 h-3 text-rose-400" /> {m.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 4. Umichand */}
+          {charId === "umichand" && (
+            <p className="text-xs text-rose-300">
+              আপনি একাকী চক্রান্তকারী (উমিচাঁদ)। আপনি কাউকে চেনেন না, কেউ আপনাকে চেনে না।
             </p>
+          )}
+
+          {/* 5. Ray Durlabh */}
+          {charId === "ray_durlabh" && (
+            <p className="text-xs text-amber-300">
+              গোপন চক্রান্তকারী (রায় দুর্লভ)। মীর মদন আপনাকে চক্রান্তকারী হিসেবে দেখতে পায়নি!
+            </p>
+          )}
+
+          {/* 6. Generic Loyalists */}
+          {localPlayer.faction === "NAWAB" && charId !== "mir_madan" && charId !== "mohan_lal" && (
+            <p className="text-xs text-slate-400">
+              আপনি রাতের আঁধারে কাউকে দেখেননি। নবাবের অনুগত হয়ে যুক্তি ও ভোটে বাংলাকে রক্ষা করুন।
+            </p>
+          )}
+        </div>
+      ) : (
+        <div
+          onClick={() => setIsCardRevealed(true)}
+          className="bg-slate-900/60 hover:bg-slate-900/90 border border-slate-800 rounded-2xl p-4 text-center space-y-1.5 cursor-pointer transition-colors shadow-md group"
+        >
+          <div className="w-9 h-9 rounded-full bg-slate-800 group-hover:bg-indigo-950 flex items-center justify-center mx-auto text-amber-400 transition-colors">
+            <EyeOff className="w-4 h-4 text-slate-400 group-hover:text-amber-400" />
           </div>
-        )}
-
-        {/* 2. Mohan Lal */}
-        {charId === "mohan_lal" && (
-          <div className="space-y-1.5 text-xs">
-            <p className="text-slate-300">মীর মদন প্রার্থী (একজন আসল, একজন ঘষেটি বেগম):</p>
-            <div className="flex flex-wrap gap-2">
-              {nightVision?.mirMadanCandidates?.map((c, i) => (
-                <span
-                  key={c.id}
-                  className="px-3 py-1 rounded-lg bg-amber-950/70 border border-amber-600/60 text-amber-200 font-bold"
-                >
-                  প্রার্থী {i + 1}: {c.name}
-                </span>
-              ))}
-            </div>
+          <div className="text-xs font-bold text-slate-300">
+            কার্ড উন্মোচন করার পর রাতের গোপন তথ্য ও সহযোগীদের নাম দৃশ্যমান হবে
           </div>
-        )}
-
-        {/* 3. Regular EIC */}
-        {localPlayer.faction === "EIC" && charId !== "umichand" && (
-          <div className="space-y-1.5 text-xs">
-            <p className="text-slate-300">আপনার সহযোগী কোম্পানি চক্রান্তকারী:</p>
-            <div className="flex flex-wrap gap-2">
-              {nightVision?.fellowEicMembers?.map((m) => (
-                <span
-                  key={m.id}
-                  className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"
-                >
-                  <Skull className="w-3 h-3 text-rose-400" /> {m.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 4. Umichand */}
-        {charId === "umichand" && (
-          <p className="text-xs text-rose-300">
-            আপনি একাকী চক্রান্তকারী (উমিচাঁদ)। আপনি কাউকে চেনেন না, কেউ আপনাকে চেনে না।
+          <p className="text-[11px] text-slate-500">
+            (গোপনীয়তা রক্ষা করতে কার্ডটি স্পর্শ করে উল্টান)
           </p>
-        )}
-
-        {/* 5. Ray Durlabh */}
-        {charId === "ray_durlabh" && (
-          <p className="text-xs text-amber-300">
-            গোপন চক্রান্তকারী (রায় দুর্লভ)। মীর মদন আপনাকে চক্রান্তকারী হিসেবে দেখতে পায়নি!
-          </p>
-        )}
-
-        {/* 6. Generic Loyalists */}
-        {localPlayer.faction === "NAWAB" && charId !== "mir_madan" && charId !== "mohan_lal" && (
-          <p className="text-xs text-slate-400">
-            আপনি রাতের আঁধারে কাউকে দেখেননি। নবাবের অনুগত হয়ে যুক্তি ও ভোটে বাংলাকে রক্ষা করুন।
-          </p>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Ready Button */}
       <button

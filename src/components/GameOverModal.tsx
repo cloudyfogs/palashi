@@ -88,7 +88,11 @@ export const GameOverModal: React.FC = () => {
                 <div>
                   <div className="font-extrabold text-sm text-slate-100">{p.name}</div>
                   <div className="text-[11px] font-semibold text-slate-400">
-                    {p.character?.nameBn} ({p.character?.nameEn})
+                    {p.character
+                      ? `${p.character.nameBn} (${p.character.nameEn})`
+                      : isNawab
+                      ? "নবাবের অনুগত"
+                      : "কোম্পানির চক্রান্তকারী"}
                   </div>
                 </div>
 

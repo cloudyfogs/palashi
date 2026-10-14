@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useGame } from "@/context/GameContext";
-import { Swords, Flame, Skull, Check, X, ArrowRight, ShieldCheck } from "lucide-react";
+import { Swords, Check, X, ArrowRight, ShieldCheck, Lock } from "lucide-react";
 
 export const VotePhaseView: React.FC = () => {
   const { gameState, localPlayer, dispatchAction } = useGame();
@@ -33,11 +33,13 @@ export const VotePhaseView: React.FC = () => {
     });
   };
 
-  const yesVotes = players.filter((p) => p.vote === "YES");
-  const noVotes = players.filter((p) => p.vote === "NO");
   const hasVotedCount = players.filter((p) => p.vote !== null && p.vote !== undefined).length;
   const totalCount = players.length;
-  const votePassed = yesVotes.length > totalCount / 2;
+
+  const lastTally = gameState.lastVoteTally;
+  const votePassed = lastTally ? lastTally.passed : false;
+  const yesVotesCount = lastTally ? lastTally.yesCount : 0;
+  const noVotesCount = lastTally ? lastTally.noCount : 0;
 
   return (
     <div className="max-w-xl mx-auto space-y-5">
@@ -45,7 +47,7 @@ export const VotePhaseView: React.FC = () => {
       <div className="bg-slate-900/90 border-2 border-amber-600/50 rounded-2xl p-4 shadow-xl text-center space-y-2.5">
         <div className="flex items-center justify-between text-xs font-bold text-slate-400 border-b border-slate-800 pb-2">
           <span className="flex items-center gap-1.5 text-amber-300">
-            <Swords className="w-4 h-4" /> অধ্যায় {gameState.currentChapter + 1} — প্রস্তাবিত সৈন্যদল
+            <Swords className="w-4 h-4" /> অধ্যায় {(gameState.currentChapter || 0) + 1} — প্রস্তাবিত সৈন্যদল
           </span>
           <span className="text-slate-400 font-mono">
             {isVoting ? `ভোট জমা: ${hasVotedCount}/${totalCount}` : "ফলাফল ঘোষিত"}
@@ -73,8 +75,8 @@ export const VotePhaseView: React.FC = () => {
             <h3 className="text-lg font-black text-slate-100">
               আপনি কি এই সৈন্যদলে সম্মত?
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              সকল খেলোয়াড়ের সম্মতি/অসম্মতি একসাথে উন্মোচিত হবে
+            <p className="text-xs text-slate-400 mt-0.5 flex items-center justify-center gap-1">
+              <Lock className="w-3.5 h-3.5 text-amber-400" /> ভোটদান সম্পূর্ণ গোপন ও বেনামী ব্যালটে অনুষ্ঠিত হবে
             </p>
           </div>
 
@@ -112,7 +114,7 @@ export const VotePhaseView: React.FC = () => {
         </div>
       )}
 
-      {/* Vote Reveal Podium (During VOTE_REVEAL Phase) */}
+      {/* Vote Reveal Podium (During VOTE_REVEAL Phase - Anonymous Ballot Summary) */}
       {isReveal && (
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
           <div
@@ -125,43 +127,41 @@ export const VotePhaseView: React.FC = () => {
             <div className="text-xl sm:text-2xl font-black flex items-center justify-center gap-2">
               {votePassed ? (
                 <>
-                  <Check className="w-6 h-6 stroke-[3]" /> কমিটি অনুমোদিত হয়েছে!
+                  <Check className="w-6 h-6 stroke-[3]" /> সৈন্যদল অনুমোদিত হয়েছে!
                 </>
               ) : (
                 <>
-                  <X className="w-6 h-6 stroke-[3]" /> কমিটি প্রত্যাখ্যাত হয়েছে!
+                  <X className="w-6 h-6 stroke-[3]" /> সৈন্যদল প্রত্যাখ্যাত হয়েছে!
                 </>
               )}
             </div>
             <p className="text-xs text-slate-300">
-              হ্যাঁ ভোট: {yesVotes.length} • না ভোট: {noVotes.length}
+              {votePassed
+                ? "সংখ্যাগরিষ্ঠ ভোটে কমিটি পাস হয়েছে — তারা অভিযানে যাচ্ছেন"
+                : "কমিটি সংখ্যাগরিষ্ঠের আস্থা পেতে ব্যর্থ হয়েছে — সেনাপতির দায়িত্ব স্থানান্তরিত হবে"}
             </p>
           </div>
 
-          {/* Individual Player Votes Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {players.map((p) => {
-              const isYes = p.vote === "YES";
-              return (
-                <div
-                  key={p.id}
-                  className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold ${
-                    isYes
-                      ? "bg-emerald-950/50 border-emerald-700/60 text-emerald-300"
-                      : "bg-rose-950/50 border-rose-700/60 text-rose-300"
-                  }`}
-                >
-                  <span className="truncate mr-1">{p.name}</span>
-                  <span
-                    className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-black ${
-                      isYes ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
-                    }`}
-                  >
-                    {isYes ? "হ্যাঁ" : "না"}
-                  </span>
-                </div>
-              );
-            })}
+          {/* Anonymous Ballot Tally (NO individual player names) */}
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-center space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center justify-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-amber-400" /> গোপন ভোটের ফলাফল (Anonymous Ballot)
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto">
+              <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-600/50 text-emerald-300 shadow">
+                <div className="text-2xl font-black font-mono">{yesVotesCount}</div>
+                <div className="text-xs font-bold mt-0.5">হ্যাঁ (সমর্থন)</div>
+              </div>
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-600/50 text-rose-300 shadow">
+                <div className="text-2xl font-black font-mono">{noVotesCount}</div>
+                <div className="text-xs font-bold mt-0.5">না (প্রত্যাখ্যান)</div>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              🔒 রাজনৈতিক নিরপেক্ষতা রক্ষার স্বার্থে কার ভোট কী ছিল তা গোপন রাখা হয়েছে।
+            </p>
           </div>
 
           {/* Continue button for Host or All */}

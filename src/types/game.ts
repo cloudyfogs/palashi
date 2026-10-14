@@ -98,6 +98,13 @@ export interface GameState {
   assassinationTargetId?: string;
   assassinationResult?: boolean; // true if Mir Madan was correctly assassinated
 
+  // Secret ballot voting result (anonymous tally)
+  lastVoteTally?: {
+    passed: boolean;
+    yesCount: number;
+    noCount: number;
+  };
+
   // Winner & End reason
   winner?: Faction;
   winReason?: string;

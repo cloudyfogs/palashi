@@ -95,6 +95,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }>({});
 
   const processedActionsRef = useRef<Set<string>>(new Set());
+  const fullAssignedPlayersRef = useRef<Player[]>([]);
 
   // Find local player and merge with private secret character if available
   const rawLocalPlayer = gameState?.players.find((p) => p.id === localPlayerId) || null;
@@ -148,6 +149,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const current = gameStateRef.current;
       if (!current) return;
 
+      const getRevealedPlayers = (players: Player[]): Player[] => {
+        return players.map((p) => {
+          const full = fullAssignedPlayersRef.current.find((ap) => ap.id === p.id);
+          return {
+            ...p,
+            character: full?.character || p.character,
+            faction: full?.faction || full?.character?.faction || p.faction,
+          };
+        });
+      };
+
       switch (action.type) {
         case "UPDATE_SETTINGS": {
           if (current.phase !== "LOBBY") return;
@@ -168,6 +180,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Assign roles
           const assignedPlayers = assignCharacters(current.players, current.settings);
+          fullAssignedPlayersRef.current = assignedPlayers;
           const firstSenapatiIndex = Math.floor(Math.random() * assignedPlayers.length);
 
           // Save secrets in Firebase for each player so client can inspect their own role only
@@ -293,17 +306,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
 
-          // All votes in! Determine outcome
+          // All votes in! Determine outcome anonymously
           const yesVotes = updatedPlayers.filter((p) => p.vote === "YES").length;
           const noVotes = updatedPlayers.filter((p) => p.vote === "NO").length;
           const votePassed = yesVotes > noVotes;
+
+          // Clear individual player votes so allegiances are kept strictly secret!
+          const anonymizedPlayers = updatedPlayers.map((p) => ({
+            ...p,
+            vote: null,
+          }));
+
+          const voteTally = {
+            passed: votePassed,
+            yesCount: yesVotes,
+            noCount: noVotes,
+          };
 
           if (votePassed) {
             playSuccessSound();
             broadcastState({
               ...current,
-              players: updatedPlayers,
+              players: anonymizedPlayers,
               phase: "VOTE_REVEAL",
+              lastVoteTally: voteTally,
               failedVoteCount: 0,
               timerActive: false,
             });
@@ -315,8 +341,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (newFailedCount >= 5) {
               broadcastState({
                 ...current,
-                players: updatedPlayers,
+                players: getRevealedPlayers(anonymizedPlayers),
                 phase: "GAME_OVER",
+                lastVoteTally: voteTally,
                 failedVoteCount: 5,
                 winner: "EIC",
                 winReason: "একটানা ৫ বার কমিটি গঠন ব্যর্থ হওয়ায় মসনদে অরাজকতা সৃষ্টি হয়েছে — কোম্পানি বিজয়ী!",
@@ -325,8 +352,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else {
               broadcastState({
                 ...current,
-                players: updatedPlayers,
+                players: anonymizedPlayers,
                 phase: "VOTE_REVEAL",
+                lastVoteTally: voteTally,
                 failedVoteCount: newFailedCount,
                 currentSenapatiIndex: nextSenapati,
                 timerActive: false,
@@ -338,9 +366,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         case "CONTINUE_AFTER_VOTE": {
           if (current.phase !== "VOTE_REVEAL") return;
-          const yesVotes = current.players.filter((p) => p.vote === "YES").length;
-          const noVotes = current.players.filter((p) => p.vote === "NO").length;
-          const votePassed = yesVotes > noVotes;
+          const votePassed = current.lastVoteTally?.passed ?? false;
 
           if (votePassed) {
             const clearedPlayers = current.players.map((p) => ({ ...p, chapterAction: null }));
@@ -422,6 +448,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             playFailSound();
             broadcastState({
               ...current,
+              players: getRevealedPlayers(current.players),
               chapterOutcomes: updatedOutcomes,
               history: [...current.history, historyEntry],
               phase: "GAME_OVER",
@@ -461,18 +488,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         case "MIR_JAFAR_ASSASSINATE": {
           if (current.phase !== "ASSASSINATION") return;
-          const targetPlayer = current.players.find((p) => p.id === action.targetPlayerId);
-          const isMirMadan = targetPlayer?.character?.id === "mir_madan" || localSecret?.character?.id === "mir_madan";
+          const realTarget =
+            fullAssignedPlayersRef.current.find((ap) => ap.id === action.targetPlayerId) ||
+            current.players.find((p) => p.id === action.targetPlayerId);
+          const isMirMadan = realTarget?.character?.id === "mir_madan";
 
           if (isMirMadan) {
             playFailSound();
             broadcastState({
               ...current,
+              players: getRevealedPlayers(current.players),
               assassinationTargetId: action.targetPlayerId,
               assassinationResult: true,
               phase: "GAME_OVER",
               winner: "EIC",
-              winReason: `মীর জাফর সফলভাবে মীর মদন (${targetPlayer?.name})-কে হত্যা করেছে! ইতিহাস পুনরাবৃত্তি হলো — কোম্পানি বিজয়ী!`,
+              winReason: `মীর জাফর সফলভাবে মীর মদন (${realTarget?.name})-কে হত্যা করেছে! ইতিহাস পুনরাবৃত্তি হলো — কোম্পানি বিজয়ী!`,
               timerActive: false,
             });
           } else {
@@ -480,11 +510,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             confetti({ particleCount: 150, spread: 80 });
             broadcastState({
               ...current,
+              players: getRevealedPlayers(current.players),
               assassinationTargetId: action.targetPlayerId,
               assassinationResult: false,
               phase: "GAME_OVER",
               winner: "NAWAB",
-              winReason: `মীর জাফরের চক্রান্ত ব্যর্থ হয়েছে! লক্ষ্যবস্তু ছিল (${targetPlayer?.name}), মীর মদন নয়। নবাবের বিশ্বস্ত বাহিনী বাংলাকে রক্ষা করেছে!`,
+              winReason: `মীর জাফরের চক্রান্ত ব্যর্থ হয়েছে! লক্ষ্যবস্তু ছিল (${realTarget?.name}), মীর মদন নয়। নবাবের বিশ্বস্ত বাহিনী বাংলাকে রক্ষা করেছে!`,
               timerActive: false,
             });
           }
