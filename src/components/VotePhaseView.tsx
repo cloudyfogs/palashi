@@ -12,9 +12,12 @@ export const VotePhaseView: React.FC = () => {
   const isVoting = gameState.phase === "VOTING";
   const isReveal = gameState.phase === "VOTE_REVEAL";
 
-  const nominatedPlayers = gameState.players.filter((p) =>
-    gameState.nominatedPlayerIds.includes(p.id)
-  );
+  const nominatedIds = Array.isArray(gameState.nominatedPlayerIds)
+    ? gameState.nominatedPlayerIds
+    : [];
+  const players = Array.isArray(gameState.players) ? gameState.players : [];
+
+  const nominatedPlayers = players.filter((p) => nominatedIds.includes(p.id));
 
   const handleCastVote = (vote: "YES" | "NO") => {
     dispatchAction({
@@ -30,10 +33,10 @@ export const VotePhaseView: React.FC = () => {
     });
   };
 
-  const yesVotes = gameState.players.filter((p) => p.vote === "YES");
-  const noVotes = gameState.players.filter((p) => p.vote === "NO");
-  const hasVotedCount = gameState.players.filter((p) => p.vote !== null).length;
-  const totalCount = gameState.players.length;
+  const yesVotes = players.filter((p) => p.vote === "YES");
+  const noVotes = players.filter((p) => p.vote === "NO");
+  const hasVotedCount = players.filter((p) => p.vote !== null && p.vote !== undefined).length;
+  const totalCount = players.length;
   const votePassed = yesVotes.length > totalCount / 2;
 
   return (
@@ -63,125 +66,110 @@ export const VotePhaseView: React.FC = () => {
         </div>
       </div>
 
-      {/* Voting Phase: Physical Ceramic/Wax Vote Tokens */}
+      {/* Voting Actions Area (During VOTING Phase) */}
       {isVoting && (
-        <div className="space-y-4">
-          <div className="text-center">
-            <h3 className="text-lg font-black text-slate-100">আপনার ভোট টোকেন নির্বাচন করুন</h3>
-            <p className="text-xs text-slate-400 mt-0.5">সবাই ভোট দিলে একযোগে প্রকাশ পাবে</p>
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 text-center">
+          <div>
+            <h3 className="text-lg font-black text-slate-100">
+              আপনি কি এই সৈন্যদলে সম্মত?
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              সকল খেলোয়াড়ের সম্মতি/অসম্মতি একসাথে উন্মোচিত হবে
+            </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 sm:gap-6 pt-2">
-            {/* Yes Vote Token (Blue Seal) */}
+          <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => handleCastVote("YES")}
-              className={`p-6 rounded-2xl border-4 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer select-none active:scale-95 ${
+              className={`py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition-all cursor-pointer shadow-lg ${
                 localPlayer.vote === "YES"
-                  ? "bg-gradient-to-b from-blue-900 to-blue-950 border-blue-400 text-blue-100 shadow-2xl shadow-blue-950/80 scale-105 ring-4 ring-blue-500/40"
-                  : "bg-slate-900/90 border-slate-700 hover:border-blue-500/70 text-slate-300 hover:bg-slate-800"
+                  ? "bg-emerald-600 border-emerald-400 text-white shadow-emerald-950/60 ring-2 ring-emerald-400/30 scale-[1.02]"
+                  : "bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-700/60 text-emerald-300"
               }`}
             >
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-blue-800 border-4 border-blue-300 shadow-xl flex items-center justify-center text-white">
-                <Flame className="w-10 h-10 fill-current drop-shadow" />
-              </div>
-              <div className="text-center">
-                <span className="text-lg font-black text-blue-200 block">হ্যাঁ ভোট</span>
-                <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">দলের পক্ষে</span>
-              </div>
-              {localPlayer.vote === "YES" && (
-                <span className="text-[11px] font-bold text-white bg-blue-600 px-3 py-0.5 rounded-full shadow">
-                  নির্বাচিত
-                </span>
-              )}
+              <Check className="w-5 h-5 stroke-[3]" />
+              <span>হ্যাঁ (সমর্থন)</span>
             </button>
 
-            {/* No Vote Token (Red Seal) */}
             <button
               onClick={() => handleCastVote("NO")}
-              className={`p-6 rounded-2xl border-4 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer select-none active:scale-95 ${
+              className={`py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition-all cursor-pointer shadow-lg ${
                 localPlayer.vote === "NO"
-                  ? "bg-gradient-to-b from-rose-900 to-rose-950 border-rose-400 text-rose-100 shadow-2xl shadow-rose-950/80 scale-105 ring-4 ring-rose-500/40"
-                  : "bg-slate-900/90 border-slate-700 hover:border-rose-500/70 text-slate-300 hover:bg-slate-800"
+                  ? "bg-rose-600 border-rose-400 text-white shadow-rose-950/60 ring-2 ring-rose-400/30 scale-[1.02]"
+                  : "bg-rose-950/40 hover:bg-rose-900/50 border-rose-700/60 text-rose-300"
               }`}
             >
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-rose-500 to-rose-800 border-4 border-rose-300 shadow-xl flex items-center justify-center text-white">
-                <Skull className="w-10 h-10 fill-current drop-shadow" />
-              </div>
-              <div className="text-center">
-                <span className="text-lg font-black text-rose-200 block">না ভোট</span>
-                <span className="text-[11px] font-semibold text-rose-400 uppercase tracking-wider">দলের বিপক্ষে</span>
-              </div>
-              {localPlayer.vote === "NO" && (
-                <span className="text-[11px] font-bold text-white bg-rose-600 px-3 py-0.5 rounded-full shadow">
-                  নির্বাচিত
-                </span>
-              )}
+              <X className="w-5 h-5 stroke-[3]" />
+              <span>না (প্রত্যাখ্যান)</span>
             </button>
           </div>
+
+          {localPlayer.vote && (
+            <p className="text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-pulse">
+              <ShieldCheck className="w-4 h-4" /> আপনার ভোট গৃহীত হয়েছে! বাকিদের ভোটের অপেক্ষা...
+            </p>
+          )}
         </div>
       )}
 
-      {/* Vote Reveal Phase */}
+      {/* Vote Reveal Podium (During VOTE_REVEAL Phase) */}
       {isReveal && (
-        <div className="space-y-4 animate-in fade-in zoom-in duration-300">
-          {/* Result Banner */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
           <div
-            className={`p-4 rounded-2xl border-2 text-center shadow-xl ${
+            className={`p-4 rounded-2xl text-center border-2 space-y-1 ${
               votePassed
-                ? "bg-emerald-950/80 border-emerald-500 text-emerald-100 shadow-emerald-950/60"
-                : "bg-rose-950/80 border-rose-500 text-rose-100 shadow-rose-950/60"
+                ? "bg-emerald-950/70 border-emerald-500 text-emerald-300 shadow-emerald-950/50"
+                : "bg-rose-950/70 border-rose-500 text-rose-300 shadow-rose-950/50"
             }`}
           >
             <div className="text-xl sm:text-2xl font-black flex items-center justify-center gap-2">
-              {votePassed ? <Check className="w-6 h-6 text-emerald-400" /> : <X className="w-6 h-6 text-rose-400" />}
-              <span>{votePassed ? "দল অনুমোদিত হয়েছে!" : "দল প্রত্যাখ্যাত হয়েছে!"}</span>
+              {votePassed ? (
+                <>
+                  <Check className="w-6 h-6 stroke-[3]" /> কমিটি অনুমোদিত হয়েছে!
+                </>
+              ) : (
+                <>
+                  <X className="w-6 h-6 stroke-[3]" /> কমিটি প্রত্যাখ্যাত হয়েছে!
+                </>
+              )}
             </div>
-            <div className="text-xs font-mono font-bold mt-1 text-slate-300">
-              হ্যাঁ ভোট: {yesVotes.length} | না ভোট: {noVotes.length}
-            </div>
+            <p className="text-xs text-slate-300">
+              হ্যাঁ ভোট: {yesVotes.length} • না ভোট: {noVotes.length}
+            </p>
           </div>
 
-          {/* Tokens Laid on Table */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 text-center">
-              দরবারের প্রকাশ্য মতামত:
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {gameState.players.map((p) => {
-                const isYes = p.vote === "YES";
-                return (
-                  <div
-                    key={p.id}
-                    className={`flex items-center justify-between p-2.5 rounded-xl border-2 text-xs font-bold ${
-                      isYes
-                        ? "bg-blue-950/50 border-blue-500/70 text-blue-200"
-                        : "bg-rose-950/50 border-rose-500/70 text-rose-200"
+          {/* Individual Player Votes Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {players.map((p) => {
+              const isYes = p.vote === "YES";
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold ${
+                    isYes
+                      ? "bg-emerald-950/50 border-emerald-700/60 text-emerald-300"
+                      : "bg-rose-950/50 border-rose-700/60 text-rose-300"
+                  }`}
+                >
+                  <span className="truncate mr-1">{p.name}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-black ${
+                      isYes ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
                     }`}
                   >
-                    <span className="truncate max-w-[90px]">{p.name}</span>
-                    <span className="flex items-center gap-1 font-mono text-[11px]">
-                      {isYes ? (
-                        <>
-                          <Flame className="w-3.5 h-3.5 text-blue-400" /> হ্যাঁ
-                        </>
-                      ) : (
-                        <>
-                          <Skull className="w-3.5 h-3.5 text-rose-400" /> না
-                        </>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+                    {isYes ? "হ্যাঁ" : "না"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Next Button */}
+          {/* Continue button for Host or All */}
           <button
             onClick={handleContinue}
-            className="w-full py-3.5 rounded-xl font-black text-sm bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer transition-all"
+            className="w-full py-3.5 rounded-xl font-black text-sm bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
           >
-            <span>{votePassed ? "অভিযানে যান" : "পরবর্তী সেনাপতির কাছে যান"}</span>
+            <span>{votePassed ? "অভিযানে প্রবেশ করুন" : "পরবর্তী সেনাপতির টেবিলে যান"}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

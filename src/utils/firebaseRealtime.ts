@@ -23,16 +23,57 @@ async function fbFetch<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 }
 
+// Normalize state received from Firebase (handles Firebase stripping nulls and empty arrays)
+export function normalizeGameState(raw: any): GameState {
+  if (!raw) return raw;
+  return {
+    ...raw,
+    players: Array.isArray(raw.players)
+      ? raw.players.map((p: any) => ({
+          ...p,
+          isConnected: p.isConnected ?? true,
+          hasAcknowledgedNight: p.hasAcknowledgedNight ?? false,
+          vote: p.vote ?? null,
+          chapterAction: p.chapterAction ?? null,
+        }))
+      : [],
+    chapterOutcomes: Array.isArray(raw.chapterOutcomes)
+      ? raw.chapterOutcomes.map((o: any) => (o === "NAWAB" || o === "EIC" ? o : null))
+      : [null, null, null, null, null],
+    nominatedPlayerIds: Array.isArray(raw.nominatedPlayerIds)
+      ? raw.nominatedPlayerIds
+      : [],
+    history: Array.isArray(raw.history) ? raw.history : [],
+    currentChapter: typeof raw.currentChapter === "number" ? raw.currentChapter : 0,
+    currentSenapatiIndex: typeof raw.currentSenapatiIndex === "number" ? raw.currentSenapatiIndex : 0,
+    failedVoteCount: typeof raw.failedVoteCount === "number" ? raw.failedVoteCount : 0,
+    timerActive: Boolean(raw.timerActive),
+    timerRemaining: raw.timerRemaining ?? null,
+  };
+}
+
 // 1. Core Room State
 export async function setRoomState(roomCode: string, state: GameState): Promise<void> {
+  // Convert nulls in chapterOutcomes to "PENDING" so Firebase doesn't delete the array
+  const safeOutcomes = (state.chapterOutcomes || [null, null, null, null, null]).map(
+    (o) => o || "PENDING"
+  );
+  const payload = {
+    ...state,
+    chapterOutcomes: safeOutcomes,
+    nominatedPlayerIds: state.nominatedPlayerIds || [],
+    history: state.history || [],
+  };
+
   await fbFetch(`/rooms/${roomCode}/state`, {
     method: "PUT",
-    body: JSON.stringify(state),
+    body: JSON.stringify(payload),
   });
 }
 
 export async function getRoomState(roomCode: string): Promise<GameState | null> {
-  return await fbFetch<GameState>(`/rooms/${roomCode}/state`);
+  const raw = await fbFetch<any>(`/rooms/${roomCode}/state`);
+  return raw ? normalizeGameState(raw) : null;
 }
 
 export async function updateRoomPlayers(roomCode: string, players: Player[]): Promise<void> {
@@ -70,9 +111,9 @@ export function subscribeToRoomState(
           const parsed = JSON.parse(e.data);
           if (parsed && parsed.path === "/" && parsed.data) {
             hasReceivedInitialState = true;
-            onState(parsed.data as GameState);
+            onState(normalizeGameState(parsed.data));
           } else if (parsed && parsed.path === "/" && parsed.data === null) {
-            // Only trigger room closed if we previously had state
+            // Only trigger room closed if we previously had valid state
             if (hasReceivedInitialState) {
               onRoomClosed?.();
             }

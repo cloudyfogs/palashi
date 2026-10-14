@@ -31,6 +31,7 @@ import {
   sendHeartbeat,
   removeHeartbeat,
   getHeartbeats,
+  normalizeGameState,
 } from "@/utils/firebaseRealtime";
 import { playClickSound, playVoteSound, playSuccessSound, playFailSound, playTickSound } from "@/utils/sound";
 import { botNominateSquad, botCastVote, botChooseMissionAction, botIdentifyMirMadan } from "@/utils/botAI";
@@ -115,15 +116,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Broadcast state to Firebase
   const broadcastState = useCallback((state: GameState) => {
-    setGameState(state);
+    const safeState = normalizeGameState(state);
+    setGameState(safeState);
 
     if (isHotseat) return;
 
-    const currentCode = state.roomCode || roomCodeRef.current;
+    const currentCode = safeState.roomCode || roomCodeRef.current;
     if (!currentCode) return;
 
     // Publish public state to Firebase
-    setRoomState(currentCode, state).catch(console.error);
+    setRoomState(currentCode, safeState).catch(console.error);
   }, [isHotseat]);
 
   // Fetch private secret whenever phase transitions to NIGHT or GAME_OVER
@@ -780,7 +782,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      const state: GameState = {
+      const state: GameState = normalizeGameState({
         roomCode: code,
         settings,
         phase: "LOBBY",
@@ -793,7 +795,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         history: [],
         timerRemaining: null,
         timerActive: false,
-      };
+      });
 
       setGameState(state);
       setConnectionStatus("connected");

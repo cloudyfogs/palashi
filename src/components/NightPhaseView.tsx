@@ -20,8 +20,9 @@ export const NightPhaseView: React.FC = () => {
     });
   };
 
-  const acknowledgedCount = gameState.players.filter((p) => p.hasAcknowledgedNight).length;
-  const totalCount = gameState.players.length;
+  const players = Array.isArray(gameState.players) ? gameState.players : [];
+  const acknowledgedCount = players.filter((p) => p.hasAcknowledgedNight).length;
+  const totalCount = players.length;
 
   return (
     <div className="max-w-xl mx-auto space-y-4">
@@ -56,7 +57,7 @@ export const NightPhaseView: React.FC = () => {
           <div className="space-y-1.5 text-xs">
             <p className="text-slate-300">চিহ্নিত কোম্পানি চক্রান্তকারী (রায় দুর্লভ ছাড়া):</p>
             <div className="flex flex-wrap gap-2">
-              {nightVision?.knownConspirators.map((c) => (
+              {nightVision?.knownConspirators?.map((c) => (
                 <span
                   key={c.id}
                   className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"
@@ -76,7 +77,7 @@ export const NightPhaseView: React.FC = () => {
           <div className="space-y-1.5 text-xs">
             <p className="text-slate-300">মীর মদন প্রার্থী (একজন আসল, একজন ঘষেটি বেগম):</p>
             <div className="flex flex-wrap gap-2">
-              {nightVision?.mirMadanCandidates.map((c, i) => (
+              {nightVision?.mirMadanCandidates?.map((c, i) => (
                 <span
                   key={c.id}
                   className="px-3 py-1 rounded-lg bg-amber-950/70 border border-amber-600/60 text-amber-200 font-bold"
@@ -93,7 +94,7 @@ export const NightPhaseView: React.FC = () => {
           <div className="space-y-1.5 text-xs">
             <p className="text-slate-300">আপনার সহযোগী কোম্পানি চক্রান্তকারী:</p>
             <div className="flex flex-wrap gap-2">
-              {nightVision?.fellowEicMembers.map((m) => (
+              {nightVision?.fellowEicMembers?.map((m) => (
                 <span
                   key={m.id}
                   className="px-2.5 py-1 rounded-lg bg-rose-950/70 border border-rose-700/60 text-rose-200 font-bold flex items-center gap-1"

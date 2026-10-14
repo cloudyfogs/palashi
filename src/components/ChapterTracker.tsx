@@ -9,10 +9,12 @@ export const ChapterTracker: React.FC = () => {
   const { gameState } = useGame();
   if (!gameState) return null;
 
-  const playerCount = gameState.settings.playerCount;
+  const playerCount = gameState.settings?.playerCount || 5;
   const squadSizes = SQUAD_SIZES[playerCount] || [2, 3, 2, 3, 3];
-  const outcomes = gameState.chapterOutcomes;
-  const currentChapter = gameState.currentChapter;
+  const outcomes = Array.isArray(gameState.chapterOutcomes)
+    ? gameState.chapterOutcomes
+    : [null, null, null, null, null];
+  const currentChapter = typeof gameState.currentChapter === "number" ? gameState.currentChapter : 0;
 
   return (
     <div className="w-full bg-slate-900/80 backdrop-blur-sm border border-slate-800 rounded-2xl p-4 shadow-xl space-y-4">
@@ -94,7 +96,7 @@ export const ChapterTracker: React.FC = () => {
 
         <div className="flex items-center gap-1.5">
           {[1, 2, 3, 4, 5].map((step) => {
-            const isFailed = step <= gameState.failedVoteCount;
+            const isFailed = step <= (gameState.failedVoteCount || 0);
             const isMax = step === 5;
 
             return (
