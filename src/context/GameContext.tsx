@@ -15,6 +15,7 @@ import {
   checkOverallWinner,
   computeNightVision,
   NightVision,
+  shuffle,
 } from "@/utils/gameLogic";
 import { SQUAD_SIZES } from "@/constants/rules";
 import {
@@ -99,11 +100,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Find local player and merge with private secret character if available
   const rawLocalPlayer = gameState?.players.find((p) => p.id === localPlayerId) || null;
+  const fullPlayer = fullAssignedPlayersRef.current.find((p) => p.id === localPlayerId);
   const localPlayer = rawLocalPlayer
     ? {
         ...rawLocalPlayer,
-        character: rawLocalPlayer.character || localSecret?.character,
-        faction: rawLocalPlayer.faction || localSecret?.character?.faction,
+        character: rawLocalPlayer.character || localSecret?.character || fullPlayer?.character,
+        faction: rawLocalPlayer.faction || localSecret?.character?.faction || fullPlayer?.character?.faction || fullPlayer?.faction,
       }
     : null;
 
@@ -413,6 +415,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // All submitted! Evaluate Chapter outcome
           const submittedActions = squadPlayers.map((p) => p.chapterAction as "SUCCESS" | "FAIL");
+          const failsRequired =
+            current.currentChapter === 3 && current.settings.playerCount >= 7 ? 2 : 1;
           const { passed, failCount, successCount } = checkChapterSuccess(
             current.currentChapter,
             current.settings.playerCount,
@@ -430,7 +434,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const historyEntry: ChapterHistory = {
             chapterIndex: current.currentChapter,
             squadSize: current.nominatedPlayerIds.length,
-            failsRequired: current.currentChapter === 3 && current.settings.playerCount >= 7 ? 2 : 1,
+            failsRequired,
             senapatiId: current.players[current.currentSenapatiIndex].id,
             nominatedPlayerIds: [...current.nominatedPlayerIds],
             votes: votesRecord,
@@ -440,8 +444,49 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             chapterPassed: passed,
           };
 
-          const nawabWins = updatedOutcomes.filter((o) => o === "NAWAB").length;
-          const eicWins = updatedOutcomes.filter((o) => o === "EIC").length;
+          // Shuffle submitted actions to guarantee anonymity!
+          const shuffledActions = shuffle([...submittedActions]);
+
+          // Clear individual player chapterAction so no one can inspect player objects
+          const anonymizedPlayers = updatedPlayers.map((p) => ({
+            ...p,
+            chapterAction: null,
+          }));
+
+          const missionResults = {
+            chapterIndex: current.currentChapter,
+            passed,
+            successCount,
+            failCount,
+            failsRequired,
+            actions: shuffledActions,
+          };
+
+          if (passed) {
+            playSuccessSound();
+          } else {
+            playFailSound();
+          }
+
+          // ALWAYS transition to MISSION_REVEAL so players see the cards and discuss!
+          broadcastState({
+            ...current,
+            players: anonymizedPlayers,
+            chapterOutcomes: updatedOutcomes,
+            history: [...current.history, historyEntry],
+            phase: "MISSION_REVEAL",
+            lastMissionResults: missionResults,
+            timerActive: false,
+            timerRemaining: null,
+          });
+          break;
+        }
+
+        case "CONTINUE_AFTER_MISSION": {
+          if (current.phase !== "MISSION_REVEAL") return;
+
+          const nawabWins = current.chapterOutcomes.filter((o) => o === "NAWAB").length;
+          const eicWins = current.chapterOutcomes.filter((o) => o === "EIC").length;
           const nextSenapati = (current.currentSenapatiIndex + 1) % current.players.length;
 
           if (eicWins >= 3) {
@@ -449,35 +494,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             broadcastState({
               ...current,
               players: getRevealedPlayers(current.players),
-              chapterOutcomes: updatedOutcomes,
-              history: [...current.history, historyEntry],
               phase: "GAME_OVER",
               winner: "EIC",
               winReason: "ইস্ট ইন্ডিয়া কোম্পানি ৩টি অধ্যায়ে নাশকতা চালিয়ে মসনদ দখল করেছে!",
               timerActive: false,
             });
           } else if (nawabWins >= 3) {
-            confetti({ particleCount: 80, spread: 60 });
+            confetti({ particleCount: 100, spread: 70 });
             playSuccessSound();
             broadcastState({
               ...current,
-              chapterOutcomes: updatedOutcomes,
-              history: [...current.history, historyEntry],
               phase: "ASSASSINATION",
               timerRemaining: current.settings.useTimers ? current.settings.assassinationTimeSeconds : null,
               timerActive: current.settings.useTimers,
             });
           } else {
-            if (passed) playSuccessSound();
-            else playFailSound();
-
+            playClickSound();
             broadcastState({
               ...current,
               currentChapter: current.currentChapter + 1,
               currentSenapatiIndex: nextSenapati,
               nominatedPlayerIds: [],
-              chapterOutcomes: updatedOutcomes,
-              history: [...current.history, historyEntry],
               phase: "NOMINATION",
               timerRemaining: current.settings.useTimers ? current.settings.nominationTimeSeconds : null,
               timerActive: current.settings.useTimers,
@@ -600,6 +637,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             history: [],
             winner: undefined,
             winReason: undefined,
+            lastVoteTally: undefined,
+            lastMissionResults: undefined,
             timerRemaining: null,
             timerActive: false,
           });

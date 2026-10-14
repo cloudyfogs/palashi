@@ -49,6 +49,23 @@ export function normalizeGameState(raw: any): GameState {
     failedVoteCount: typeof raw.failedVoteCount === "number" ? raw.failedVoteCount : 0,
     timerActive: Boolean(raw.timerActive),
     timerRemaining: raw.timerRemaining ?? null,
+    lastVoteTally: raw.lastVoteTally
+      ? {
+          passed: Boolean(raw.lastVoteTally.passed),
+          yesCount: Number(raw.lastVoteTally.yesCount || 0),
+          noCount: Number(raw.lastVoteTally.noCount || 0),
+        }
+      : undefined,
+    lastMissionResults: raw.lastMissionResults
+      ? {
+          chapterIndex: Number(raw.lastMissionResults.chapterIndex || 0),
+          passed: Boolean(raw.lastMissionResults.passed),
+          successCount: Number(raw.lastMissionResults.successCount || 0),
+          failCount: Number(raw.lastMissionResults.failCount || 0),
+          failsRequired: Number(raw.lastMissionResults.failsRequired || 1),
+          actions: Array.isArray(raw.lastMissionResults.actions) ? raw.lastMissionResults.actions : [],
+        }
+      : undefined,
   };
 }
 

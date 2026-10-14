@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import { useGame } from "@/context/GameContext";
 import { getFailsRequired } from "@/constants/rules";
-import { shuffle } from "@/utils/gameLogic";
-import { Flame, Skull, Check, X, Shield, ArrowRight, AlertTriangle, Swords } from "lucide-react";
+import { Flame, Skull, Check, Shield, ArrowRight, Swords, ShieldCheck, Lock } from "lucide-react";
 
 export const ChapterMissionView: React.FC = () => {
   const { gameState, localPlayer, dispatchAction } = useGame();
@@ -42,28 +41,35 @@ export const ChapterMissionView: React.FC = () => {
     });
   };
 
-  const squadActions = nominatedIds.map((id) => {
-    const p = players.find((player) => player.id === id);
-    return p?.chapterAction || "SUCCESS";
-  });
-
-  const shuffledActions = useMemo(() => {
-    return shuffle(squadActions);
-  }, [isReveal, squadActions.length]);
-
-  const failCount = squadActions.filter((a) => a === "FAIL").length;
-  const successCount = squadActions.filter((a) => a === "SUCCESS").length;
-  const chapterPassed = failCount < failsRequired;
-
   const submittedCount = nominatedIds.filter((id) => {
     const p = players.find((player) => player.id === id);
     return p?.chapterAction !== null && p?.chapterAction !== undefined;
   }).length;
   const totalSquadCount = nominatedIds.length;
 
+  // Authoritative mission results from gameState
+  const missionResults = gameState.lastMissionResults;
+  const cardActions = missionResults?.actions || [];
+  const successCount = missionResults?.successCount ?? 0;
+  const failCount = missionResults?.failCount ?? 0;
+  const chapterFailsRequired = missionResults?.failsRequired ?? failsRequired;
+  const chapterPassed = missionResults ? missionResults.passed : failCount < chapterFailsRequired;
+
+  const nawabWins = (gameState.chapterOutcomes || []).filter((o) => o === "NAWAB").length;
+  const eicWins = (gameState.chapterOutcomes || []).filter((o) => o === "EIC").length;
+
+  let continueButtonText = "পরবর্তী অধ্যায়ে অগ্রসর হন";
+  if (eicWins >= 3) {
+    continueButtonText = "চূড়ান্ত ফলাফল দেখুন (কোম্পানি মসনদ দখল করেছে)";
+  } else if (nawabWins >= 3) {
+    continueButtonText = "পরবর্তী পদক্ষেপে যান (মীর জাফরের গুপ্তহত্যা)";
+  } else {
+    continueButtonText = `পরবর্তী অধ্যায়ে অগ্রসর হন (অধ্যায় ${(gameState.currentChapter || 0) + 2})`;
+  }
+
   return (
     <div className="max-w-xl mx-auto space-y-5">
-      {/* Chapter Mission Area */}
+      {/* Chapter Mission Area Header */}
       <div className="bg-slate-900/90 border-2 border-emerald-600/50 rounded-2xl p-4 shadow-xl text-center space-y-2.5">
         <div className="flex items-center justify-between text-xs font-bold text-slate-400 border-b border-slate-800 pb-2">
           <span className="flex items-center gap-1.5 text-emerald-400 font-black">
@@ -163,62 +169,149 @@ export const ChapterMissionView: React.FC = () => {
 
       {/* Mission Reveal Podium (MISSION_REVEAL phase) */}
       {isReveal && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-5">
+          {/* Chapter Outcome Status Banner */}
           <div
-            className={`p-4 rounded-2xl text-center border-2 space-y-1 ${
+            className={`p-4 rounded-2xl text-center border-2 space-y-1.5 shadow-xl ${
               chapterPassed
-                ? "bg-emerald-950/70 border-emerald-500 text-emerald-300 shadow-emerald-950/50"
-                : "bg-rose-950/70 border-rose-500 text-rose-300 shadow-rose-950/50"
+                ? "bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-emerald-500 text-emerald-200"
+                : "bg-gradient-to-r from-rose-950/80 via-rose-900/60 to-rose-950/80 border-rose-500 text-rose-200"
             }`}
           >
             <div className="text-xl sm:text-2xl font-black flex items-center justify-center gap-2">
               {chapterPassed ? (
                 <>
-                  <Check className="w-6 h-6 stroke-[3]" /> অধ্যায় সফলভাবে সম্পন্ন হয়েছে!
+                  <ShieldCheck className="w-7 h-7 text-emerald-400 stroke-[2.5]" />
+                  <span className="text-emerald-300">অধ্যায় সফলভাবে সম্পন্ন হয়েছে!</span>
                 </>
               ) : (
                 <>
-                  <Flame className="w-6 h-6 text-rose-400" /> অধ্যায়ে নাশকতা চালানো হয়েছে!
+                  <Flame className="w-7 h-7 text-rose-400 animate-pulse" />
+                  <span className="text-rose-300">অধ্যায়ে নাশকতা চালানো হয়েছে!</span>
                 </>
               )}
             </div>
-            <p className="text-xs text-slate-300">
-              সফল কার্ড: {successCount} • নাশকতা কার্ড: {failCount} (প্রয়োজন ছিল {failsRequired}টি)
+            <p className="text-xs font-medium text-slate-300">
+              {chapterPassed
+                ? "সৈন্যদল নবাবের মসনদের প্রতি বিশ্বস্ততা বজায় রেখে অভিযান সম্পন্ন করেছে।"
+                : "সৈন্যদলের ভেতরে ঘাপটি মেরে থাকা কোম্পানির গুপ্তচর নাশকতা ঘটিয়েছে!"}
             </p>
+            <div className="text-[11px] font-mono text-slate-400 pt-0.5">
+              প্রয়োজনীয় নাশকতা: {chapterFailsRequired}টি • প্রাপ্ত নাশকতা: {failCount}টি
+            </div>
           </div>
 
-          {/* Shuffled Anonymous Cards Reveal */}
-          <div>
-            <div className="text-center text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-              বেনামী কার্ড প্রকাশ (Anonymous Shuffled Cards)
+          {/* Anonymous Card Tally Counts (Green vs Red) */}
+          <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto">
+            <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-600/50 text-emerald-300 shadow text-center">
+              <div className="text-2xl sm:text-3xl font-black font-mono">{successCount}</div>
+              <div className="text-xs font-bold mt-0.5">সবুজ কার্ড (সফল)</div>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-3 py-1">
-              {shuffledActions.map((action, idx) => {
+            <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-600/50 text-rose-300 shadow text-center">
+              <div className="text-2xl sm:text-3xl font-black font-mono">{failCount}</div>
+              <div className="text-xs font-bold mt-0.5">লাল কার্ড (নাশকতা)</div>
+            </div>
+          </div>
+
+          {/* Shuffled Anonymous Playing Cards */}
+          <div className="space-y-3">
+            <div className="text-center text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-amber-400" /> গোপন কার্ড প্রকাশ (Anonymous Shuffled Cards)
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-3.5 py-2">
+              {cardActions.map((action, idx) => {
                 const isSuccess = action === "SUCCESS";
                 return (
                   <div
                     key={idx}
-                    className={`w-24 h-36 rounded-xl border-3 flex flex-col items-center justify-center p-2 shadow-xl animate-in zoom-in-75 duration-300 ${
+                    style={{ animationDelay: `${idx * 150}ms` }}
+                    className={`relative w-28 h-44 sm:w-32 sm:h-48 rounded-2xl border-2 flex flex-col justify-between p-3 shadow-2xl transition-all duration-300 transform hover:-translate-y-1 hover:shadow-2xl animate-in zoom-in-75 fill-mode-both ${
                       isSuccess
-                        ? "bg-gradient-to-br from-emerald-900 to-emerald-950 border-emerald-500 text-emerald-300 shadow-emerald-950/60"
-                        : "bg-gradient-to-br from-rose-900 to-rose-950 border-rose-500 text-rose-300 shadow-rose-950/60 animate-bounce"
+                        ? "bg-gradient-to-b from-emerald-800 via-emerald-950 to-slate-950 border-amber-400/80 text-emerald-200 shadow-emerald-950/80 ring-1 ring-emerald-500/40"
+                        : "bg-gradient-to-b from-rose-900 via-rose-950 to-neutral-950 border-rose-500/90 text-rose-200 shadow-rose-950/90 ring-1 ring-rose-500/50"
                     }`}
                   >
-                    {isSuccess ? (
-                      <>
-                        <Check className="w-10 h-10 stroke-[3] text-emerald-400" />
-                        <span className="text-xs font-black uppercase mt-1">সফল</span>
-                      </>
-                    ) : (
-                      <>
-                        <Skull className="w-10 h-10 stroke-[2] text-rose-400" />
-                        <span className="text-xs font-black uppercase mt-1">নাশকতা</span>
-                      </>
-                    )}
+                    {/* Top Pip */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        {isSuccess ? (
+                          <Shield className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <Flame className="w-3.5 h-3.5 text-rose-400" />
+                        )}
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wider ${
+                            isSuccess ? "text-amber-300" : "text-rose-300"
+                          }`}
+                        >
+                          {isSuccess ? "সফল" : "নাশকতা"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400/60 font-bold">
+                        #{idx + 1}
+                      </span>
+                    </div>
+
+                    {/* Center Medallion */}
+                    <div className="flex flex-col items-center justify-center gap-1.5 my-auto">
+                      <div
+                        className={`w-14 h-14 rounded-full flex items-center justify-center border-2 shadow-inner ${
+                          isSuccess
+                            ? "bg-emerald-900/60 border-amber-400/60 shadow-emerald-950"
+                            : "bg-rose-950/60 border-rose-500/60 shadow-rose-950"
+                        }`}
+                      >
+                        {isSuccess ? (
+                          <Check className="w-8 h-8 stroke-[3] text-emerald-400" />
+                        ) : (
+                          <Skull className="w-8 h-8 stroke-[2.2] text-rose-400" />
+                        )}
+                      </div>
+
+                      <div className="text-center">
+                        <span
+                          className={`text-sm font-black tracking-wide block ${
+                            isSuccess ? "text-emerald-300" : "text-rose-300"
+                          }`}
+                        >
+                          {isSuccess ? "সফল" : "নাশকতা"}
+                        </span>
+                        <span className="text-[9px] text-slate-400 block font-normal">
+                          {isSuccess ? "নবাবের পক্ষ" : "কোম্পানির পক্ষ"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Bottom Pip */}
+                    <div className="flex items-center justify-between rotate-180">
+                      <div className="flex items-center gap-1">
+                        {isSuccess ? (
+                          <Shield className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <Flame className="w-3.5 h-3.5 text-rose-400" />
+                        )}
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wider ${
+                            isSuccess ? "text-amber-300" : "text-rose-300"
+                          }`}
+                        >
+                          {isSuccess ? "সফল" : "নাশকতা"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400/60 font-bold">
+                        #{idx + 1}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Privacy Guarantee Note */}
+            <p className="text-[11px] text-slate-500 text-center">
+              🔒 রাজনৈতিক নিরপেক্ষতা ও খেলা অক্ষুণ্ণ রাখার জন্য কে কোন কার্ড ফেলেছেন তা প্রকাশ করা হয়নি।
+            </p>
           </div>
 
           {/* Continue button */}
@@ -226,7 +319,7 @@ export const ChapterMissionView: React.FC = () => {
             onClick={handleContinue}
             className="w-full py-3.5 rounded-xl font-black text-sm bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
           >
-            <span>পরবর্তী অধ্যায়ে অগ্রসর হন</span>
+            <span>{continueButtonText}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

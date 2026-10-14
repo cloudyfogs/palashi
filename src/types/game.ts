@@ -105,6 +105,16 @@ export interface GameState {
     noCount: number;
   };
 
+  // Secret mission action cards result (anonymous shuffled cards)
+  lastMissionResults?: {
+    chapterIndex: number;
+    passed: boolean;
+    successCount: number;
+    failCount: number;
+    failsRequired: number;
+    actions: ("SUCCESS" | "FAIL")[];
+  };
+
   // Winner & End reason
   winner?: Faction;
   winReason?: string;
