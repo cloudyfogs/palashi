@@ -1,5 +1,5 @@
 import { FIREBASE_DB_URL } from "@/constants/firebaseConfig";
-import { GameState, ClientAction } from "@/types/game";
+import { GameState, ClientAction, Player } from "@/types/game";
 
 // Generic JSON fetch helper
 async function fbFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T | null> {
@@ -23,16 +23,23 @@ async function fbFetch<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 }
 
-// 1. Room Meta
-export async function setRoomMeta(roomCode: string, meta: Record<string, any>): Promise<void> {
-  await fbFetch(`/rooms/${roomCode}/meta`, {
+// 1. Core Room State
+export async function setRoomState(roomCode: string, state: GameState): Promise<void> {
+  await fbFetch(`/rooms/${roomCode}/state`, {
     method: "PUT",
-    body: JSON.stringify(meta),
+    body: JSON.stringify(state),
   });
 }
 
-export async function getRoomMeta(roomCode: string): Promise<Record<string, any> | null> {
-  return await fbFetch<Record<string, any>>(`/rooms/${roomCode}/meta`);
+export async function getRoomState(roomCode: string): Promise<GameState | null> {
+  return await fbFetch<GameState>(`/rooms/${roomCode}/state`);
+}
+
+export async function updateRoomPlayers(roomCode: string, players: Player[]): Promise<void> {
+  await fbFetch(`/rooms/${roomCode}/state/players`, {
+    method: "PUT",
+    body: JSON.stringify(players),
+  });
 }
 
 export async function deleteRoom(roomCode: string): Promise<void> {
@@ -41,36 +48,17 @@ export async function deleteRoom(roomCode: string): Promise<void> {
   });
 }
 
-// 2. Player State (Sanitized per player)
-export async function setPlayerState(
+// Subscribes to full Room State using native EventSource with fallback polling
+export function subscribeToRoomState(
   roomCode: string,
-  playerId: string,
-  state: GameState
-): Promise<void> {
-  await fbFetch(`/rooms/${roomCode}/playerStates/${playerId}`, {
-    method: "PUT",
-    body: JSON.stringify(state),
-  });
-}
-
-export async function getPlayerState(
-  roomCode: string,
-  playerId: string
-): Promise<GameState | null> {
-  return await fbFetch<GameState>(`/rooms/${roomCode}/playerStates/${playerId}`);
-}
-
-// Subscribes a player to their state using EventSource with fallback polling
-export function subscribeToPlayerState(
-  roomCode: string,
-  playerId: string,
   onState: (state: GameState) => void,
   onRoomClosed?: () => void
 ): () => void {
   let isClosed = false;
   let es: EventSource | null = null;
+  let hasReceivedInitialState = false;
 
-  const url = `${FIREBASE_DB_URL}/rooms/${roomCode}/playerStates/${playerId}.json`;
+  const url = `${FIREBASE_DB_URL}/rooms/${roomCode}/state.json`;
 
   const connectSSE = () => {
     if (isClosed) return;
@@ -81,10 +69,13 @@ export function subscribeToPlayerState(
         try {
           const parsed = JSON.parse(e.data);
           if (parsed && parsed.path === "/" && parsed.data) {
+            hasReceivedInitialState = true;
             onState(parsed.data as GameState);
           } else if (parsed && parsed.path === "/" && parsed.data === null) {
-            // State deleted or room closed
-            onRoomClosed?.();
+            // Only trigger room closed if we previously had state
+            if (hasReceivedInitialState) {
+              onRoomClosed?.();
+            }
           }
         } catch (err) {
           console.warn("Error parsing state SSE data:", err);
@@ -95,12 +86,9 @@ export function subscribeToPlayerState(
       es.addEventListener("patch", handleEvent);
 
       es.onerror = () => {
-        // EventSource will auto-reconnect, but if state was deleted, check meta
-        if (!isClosed) {
-          getRoomMeta(roomCode).then((meta) => {
-            if (!meta && !isClosed) {
-              onRoomClosed?.();
-            }
+        if (!isClosed && hasReceivedInitialState) {
+          getRoomState(roomCode).then((st) => {
+            if (!st && !isClosed) onRoomClosed?.();
           });
         }
       };
@@ -111,19 +99,17 @@ export function subscribeToPlayerState(
 
   connectSSE();
 
-  // Periodic fallback poll (every 2.5s) to guarantee updates if SSE connection sleeps
+  // Periodic poll to ensure background tabs stay 100% updated
   const pollInterval = setInterval(async () => {
     if (isClosed) return;
-    const state = await getPlayerState(roomCode, playerId);
+    const state = await getRoomState(roomCode);
     if (state && !isClosed) {
+      hasReceivedInitialState = true;
       onState(state);
-    } else if (!state && !isClosed) {
-      const meta = await getRoomMeta(roomCode);
-      if (!meta && !isClosed) {
-        onRoomClosed?.();
-      }
+    } else if (!state && !isClosed && hasReceivedInitialState) {
+      onRoomClosed?.();
     }
-  }, 2500);
+  }, 2000);
 
   return () => {
     isClosed = true;
@@ -135,33 +121,26 @@ export function subscribeToPlayerState(
   };
 }
 
-// 3. Join Requests
-export async function sendJoinRequest(
+// 2. Secret Roles & Night Vision
+export async function setPlayerSecret(
   roomCode: string,
-  player: { id: string; name: string; avatarIndex: number }
+  playerId: string,
+  secret: { character: any; vision: any }
 ): Promise<void> {
-  await fbFetch(`/rooms/${roomCode}/joinRequests/${player.id}`, {
+  await fbFetch(`/rooms/${roomCode}/secrets/${playerId}`, {
     method: "PUT",
-    body: JSON.stringify({
-      ...player,
-      timestamp: Date.now(),
-    }),
+    body: JSON.stringify(secret),
   });
 }
 
-export async function deleteJoinRequest(roomCode: string, playerId: string): Promise<void> {
-  await fbFetch(`/rooms/${roomCode}/joinRequests/${playerId}`, {
-    method: "DELETE",
-  });
+export async function getPlayerSecret(
+  roomCode: string,
+  playerId: string
+): Promise<{ character: any; vision: any } | null> {
+  return await fbFetch<{ character: any; vision: any }>(`/rooms/${roomCode}/secrets/${playerId}`);
 }
 
-export async function getJoinRequests(
-  roomCode: string
-): Promise<Record<string, { id: string; name: string; avatarIndex: number; timestamp: number }> | null> {
-  return await fbFetch(`/rooms/${roomCode}/joinRequests`);
-}
-
-// 4. Action Queue
+// 3. Action Queue
 export async function pushAction(roomCode: string, action: ClientAction): Promise<string | null> {
   const res = await fbFetch<{ name: string }>(`/rooms/${roomCode}/actions`, {
     method: "POST",
@@ -185,7 +164,7 @@ export async function deleteAction(roomCode: string, actionKey: string): Promise
   });
 }
 
-// 5. Heartbeats & Presence
+// 4. Heartbeats & Presence
 export async function sendHeartbeat(roomCode: string, playerId: string): Promise<void> {
   await fbFetch(`/rooms/${roomCode}/heartbeats/${playerId}`, {
     method: "PUT",
@@ -195,7 +174,6 @@ export async function sendHeartbeat(roomCode: string, playerId: string): Promise
 
 export async function removeHeartbeat(roomCode: string, playerId: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-    // Attempt beacon for fast unload
     const url = `${FIREBASE_DB_URL}/rooms/${roomCode}/heartbeats/${playerId}.json`;
     navigator.sendBeacon(url, JSON.stringify(0));
   } else {

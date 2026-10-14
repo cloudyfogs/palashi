@@ -18,14 +18,13 @@ import {
 } from "@/utils/gameLogic";
 import { SQUAD_SIZES } from "@/constants/rules";
 import {
-  setRoomMeta,
-  getRoomMeta,
+  setRoomState,
+  getRoomState,
+  updateRoomPlayers,
   deleteRoom,
-  setPlayerState,
-  subscribeToPlayerState,
-  sendJoinRequest,
-  getJoinRequests,
-  deleteJoinRequest,
+  subscribeToRoomState,
+  setPlayerSecret,
+  getPlayerSecret,
   pushAction,
   getActions,
   deleteAction,
@@ -74,6 +73,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Cached secret character and night vision for local player
+  const [localSecret, setLocalSecret] = useState<{ character: any; vision: NightVision } | null>(null);
+
   const gameStateRef = useRef<GameState | null>(null);
   gameStateRef.current = gameState;
 
@@ -86,7 +88,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isHostRef = useRef<boolean>(false);
   const hostIntervalsRef = useRef<{
     actionsInterval?: NodeJS.Timeout;
-    joinInterval?: NodeJS.Timeout;
     heartbeatInterval?: NodeJS.Timeout;
     clientHeartbeat?: NodeJS.Timeout;
     stateUnsub?: () => void;
@@ -94,17 +95,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const processedActionsRef = useRef<Set<string>>(new Set());
 
-  const localPlayer = gameState?.players.find((p) => p.id === localPlayerId) || null;
+  // Find local player and merge with private secret character if available
+  const rawLocalPlayer = gameState?.players.find((p) => p.id === localPlayerId) || null;
+  const localPlayer = rawLocalPlayer
+    ? {
+        ...rawLocalPlayer,
+        character: rawLocalPlayer.character || localSecret?.character,
+        faction: rawLocalPlayer.faction || localSecret?.character?.faction,
+      }
+    : null;
+
   const isHost = localPlayer?.isHost ?? false;
   isHostRef.current = isHost;
 
-  // Compute night vision for current local player
+  // Compute or read night vision for current local player
   const nightVision =
-    localPlayer && gameState?.players
-      ? computeNightVision(localPlayer, gameState.players)
-      : null;
+    localSecret?.vision ||
+    (localPlayer && gameState?.players ? computeNightVision(localPlayer, gameState.players) : null);
 
-  // Broadcast state to all connected players via Firebase
+  // Broadcast state to Firebase
   const broadcastState = useCallback((state: GameState) => {
     setGameState(state);
 
@@ -113,47 +122,23 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentCode = state.roomCode || roomCodeRef.current;
     if (!currentCode) return;
 
-    // 1. Update meta
-    setRoomMeta(currentCode, {
-      hostId: state.players.find((p) => p.isHost)?.id || "",
-      phase: state.phase,
-      playerCount: state.players.length,
-      settings: state.settings,
-      updatedAt: Date.now(),
-    }).catch(console.error);
-
-    // 2. Broadcast sanitized state for each human player
-    state.players.forEach((targetPlayer) => {
-      if (targetPlayer.isBot) return;
-
-      const vision = computeNightVision(targetPlayer, state.players);
-      const sanitizedPlayers = state.players.map((p) => {
-        const isSelf = p.id === targetPlayer.id;
-        const isGameOver = state.phase === "GAME_OVER";
-        const isKnownEic = vision.knownConspirators.some((k) => k.id === p.id);
-        const isFellowEic = vision.fellowEicMembers.some((k) => k.id === p.id);
-
-        if (isSelf || isGameOver) {
-          return p;
-        }
-
-        return {
-          ...p,
-          faction: isKnownEic || isFellowEic ? p.faction : undefined,
-          character: undefined,
-          chapterAction: state.phase === "MISSION_REVEAL" ? p.chapterAction : null,
-          vote: state.phase === "VOTE_REVEAL" || state.phase === "GAME_OVER" ? p.vote : null,
-        };
-      });
-
-      const playerState: GameState = {
-        ...state,
-        players: sanitizedPlayers,
-      };
-
-      setPlayerState(currentCode, targetPlayer.id, playerState).catch(console.error);
-    });
+    // Publish public state to Firebase
+    setRoomState(currentCode, state).catch(console.error);
   }, [isHotseat]);
+
+  // Fetch private secret whenever phase transitions to NIGHT or GAME_OVER
+  useEffect(() => {
+    if (!roomCode || isHotseat || !localPlayerId || isHost) return;
+    if (gameState?.phase && gameState.phase !== "LOBBY") {
+      if (!localSecret) {
+        getPlayerSecret(roomCode, localPlayerId).then((secret) => {
+          if (secret) {
+            setLocalSecret(secret);
+          }
+        });
+      }
+    }
+  }, [roomCode, isHotseat, localPlayerId, isHost, gameState?.phase, localSecret]);
 
   // Host Action Reducer
   const handleHostAction = useCallback(
@@ -181,13 +166,41 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Assign roles
           const assignedPlayers = assignCharacters(current.players, current.settings);
-          // Pick random First Senapati
           const firstSenapatiIndex = Math.floor(Math.random() * assignedPlayers.length);
+
+          // Save secrets in Firebase for each player so client can inspect their own role only
+          if (!isHotseat) {
+            const currentCode = current.roomCode || roomCodeRef.current;
+            assignedPlayers.forEach((p) => {
+              if (p.isBot) return;
+              const vision = computeNightVision(p, assignedPlayers);
+              setPlayerSecret(currentCode, p.id, {
+                character: p.character,
+                vision,
+              }).catch(console.error);
+            });
+          }
+
+          // For public state, hide characters unless Game Over
+          const publicPlayers = assignedPlayers.map((p) => ({
+            ...p,
+            character: undefined, // Hidden in public state
+            faction: undefined,   // Hidden in public state
+          }));
+
+          // Set host's local secret
+          const hostAssigned = assignedPlayers.find((p) => p.isHost);
+          if (hostAssigned) {
+            setLocalSecret({
+              character: hostAssigned.character,
+              vision: computeNightVision(hostAssigned, assignedPlayers),
+            });
+          }
 
           const updated: GameState = {
             ...current,
             phase: "NIGHT",
-            players: assignedPlayers,
+            players: publicPlayers,
             currentSenapatiIndex: firstSenapatiIndex,
             currentChapter: 0,
             failedVoteCount: 0,
@@ -250,7 +263,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             SQUAD_SIZES[current.settings.playerCount]?.[current.currentChapter] || 2;
           if (current.nominatedPlayerIds.length !== requiredSquadSize) return;
 
-          // Clear previous votes
           const clearedPlayers = current.players.map((p) => ({ ...p, vote: null }));
           playVoteSound();
           broadcastState({
@@ -299,7 +311,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const nextSenapati = (current.currentSenapatiIndex + 1) % current.players.length;
 
             if (newFailedCount >= 5) {
-              // 5 consecutive failed votes = Immediate EIC victory!
               broadcastState({
                 ...current,
                 players: updatedPlayers,
@@ -330,7 +341,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const votePassed = yesVotes > noVotes;
 
           if (votePassed) {
-            // Proceed to Mission
             const clearedPlayers = current.players.map((p) => ({ ...p, chapterAction: null }));
             broadcastState({
               ...current,
@@ -340,7 +350,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               timerActive: current.settings.useTimers,
             });
           } else {
-            // Return to Nomination with next Senapati
             broadcastState({
               ...current,
               nominatedPlayerIds: [],
@@ -408,7 +417,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const nextSenapati = (current.currentSenapatiIndex + 1) % current.players.length;
 
           if (eicWins >= 3) {
-            // EIC direct win
             playFailSound();
             broadcastState({
               ...current,
@@ -420,7 +428,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               timerActive: false,
             });
           } else if (nawabWins >= 3) {
-            // Enters ASSASSINATION phase for Mir Jafar!
             confetti({ particleCount: 80, spread: 60 });
             playSuccessSound();
             broadcastState({
@@ -432,7 +439,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               timerActive: current.settings.useTimers,
             });
           } else {
-            // Next chapter
             if (passed) playSuccessSound();
             else playFailSound();
 
@@ -454,7 +460,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         case "MIR_JAFAR_ASSASSINATE": {
           if (current.phase !== "ASSASSINATION") return;
           const targetPlayer = current.players.find((p) => p.id === action.targetPlayerId);
-          const isMirMadan = targetPlayer?.character?.id === "mir_madan";
+          const isMirMadan = targetPlayer?.character?.id === "mir_madan" || localSecret?.character?.id === "mir_madan";
 
           if (isMirMadan) {
             playFailSound();
@@ -548,6 +554,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isBot: p.isBot,
             isConnected: true,
           }));
+          setLocalSecret(null);
           playClickSound();
           broadcastState({
             ...current,
@@ -567,7 +574,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     },
-    [broadcastState]
+    [broadcastState, isHotseat]
   );
 
   // Timer interval on Host
@@ -713,7 +720,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper to cleanup all active polling/intervals
   const clearAllIntervals = useCallback(() => {
     if (hostIntervalsRef.current.actionsInterval) clearInterval(hostIntervalsRef.current.actionsInterval);
-    if (hostIntervalsRef.current.joinInterval) clearInterval(hostIntervalsRef.current.joinInterval);
     if (hostIntervalsRef.current.heartbeatInterval) clearInterval(hostIntervalsRef.current.heartbeatInterval);
     if (hostIntervalsRef.current.clientHeartbeat) clearInterval(hostIntervalsRef.current.clientHeartbeat);
     if (hostIntervalsRef.current.stateUnsub) hostIntervalsRef.current.stateUnsub();
@@ -725,6 +731,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const createRoom = useCallback(
     async (hostName: string, settings: GameSettings, isHotseatMode = false, botCount = 0) => {
       clearAllIntervals();
+      setLocalSecret(null);
       const code = generateRoomCode();
       const hostId = "player_" + Math.random().toString(36).substring(2, 9);
       setRoomCode(code);
@@ -793,57 +800,34 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setErrorMessage(null);
 
       if (!isHotseatMode) {
-        // Save to Firebase Realtime Database
-        await setRoomMeta(code, {
-          hostId,
-          phase: "LOBBY",
-          playerCount: initialPlayers.length,
-          settings,
-          createdAt: Date.now(),
-        });
-        broadcastState(state);
+        // Save initial Room State directly to Firebase
+        await setRoomState(code, state);
+
+        // Host subscribes to Room State
+        const unsub = subscribeToRoomState(
+          code,
+          (remoteState) => {
+            setGameState((prev) => {
+              if (!prev) return remoteState;
+              // If new player joined, play sound
+              if (remoteState.players.length > prev.players.length) {
+                playClickSound();
+              }
+              return remoteState;
+            });
+          },
+          () => {
+            setConnectionStatus("disconnected");
+          }
+        );
+        hostIntervalsRef.current.stateUnsub = unsub;
 
         // Host heartbeat loop
         hostIntervalsRef.current.clientHeartbeat = setInterval(() => {
           sendHeartbeat(code, hostId).catch(console.error);
-        }, 4000);
+        }, 3500);
 
-        // Host Join Requests Consumer Loop
-        hostIntervalsRef.current.joinInterval = setInterval(async () => {
-          const requests = await getJoinRequests(code);
-          if (requests) {
-            const current = gameStateRef.current;
-            if (!current) return;
-
-            let updatedPlayers = [...current.players];
-            let changed = false;
-
-            for (const [reqId, req] of Object.entries(requests)) {
-              if (
-                updatedPlayers.length < current.settings.playerCount &&
-                !updatedPlayers.some((p) => p.id === req.id)
-              ) {
-                updatedPlayers.push({
-                  id: req.id,
-                  name: req.name,
-                  avatarIndex: req.avatarIndex ?? Math.floor(Math.random() * 6),
-                  isHost: false,
-                  isConnected: true,
-                });
-                changed = true;
-                playClickSound();
-              }
-              await deleteJoinRequest(code, reqId);
-            }
-
-            if (changed) {
-              const nextState: GameState = { ...current, players: updatedPlayers };
-              broadcastState(nextState);
-            }
-          }
-        }, 1200);
-
-        // Host Actions Consumer Loop
+        // Host Actions Consumer Loop (processes non-host actions like votes, missions)
         hostIntervalsRef.current.actionsInterval = setInterval(async () => {
           const actions = await getActions(code);
           if (actions) {
@@ -873,7 +857,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
             }
           }
-        }, 750);
+        }, 600);
 
         // Host Presence / Heartbeats check
         hostIntervalsRef.current.heartbeatInterval = setInterval(async () => {
@@ -903,27 +887,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [broadcastState, handleHostAction, clearAllIntervals]
   );
 
-  // Join Room (Client) via Firebase Realtime Database
+  // Join Room (Client) - Instant direct joining with fallback polling
   const joinRoom = useCallback(
     async (code: string, playerName: string) => {
       clearAllIntervals();
+      setLocalSecret(null);
       const formattedCode = code.trim().toUpperCase();
       setRoomCode(formattedCode);
       roomCodeRef.current = formattedCode;
       setConnectionStatus("connecting");
-      setErrorMessage("সার্ভারের সাথে সংযুক্ত হচ্ছে...");
+      setErrorMessage("রুমে প্রবেশের চেষ্টা করা হচ্ছে...");
 
       try {
-        const meta = await getRoomMeta(formattedCode);
-        if (!meta) {
+        const existingState = await getRoomState(formattedCode);
+        if (!existingState) {
           setConnectionStatus("error");
           setErrorMessage(`রুম কোড "${formattedCode}" খুঁজে পাওয়া যায়নি। হোস্ট কি রুমে অপেক্ষা করছেন?`);
           return;
         }
 
-        if (meta.phase !== "LOBBY") {
+        if (existingState.phase !== "LOBBY") {
+          // Check if reconnecting
+          const existing = existingState.players.find(
+            (p) => p.name.toLowerCase() === playerName.trim().toLowerCase()
+          );
+          if (!existing) {
+            setConnectionStatus("error");
+            setErrorMessage("খেলাটি ইতিমধ্যেই শুরু হয়ে গেছে!");
+            return;
+          }
+        }
+
+        if (
+          existingState.players.length >= existingState.settings.playerCount &&
+          !existingState.players.some((p) => p.name.toLowerCase() === playerName.trim().toLowerCase())
+        ) {
           setConnectionStatus("error");
-          setErrorMessage("খেলাটি ইতিমধ্যেই শুরু হয়ে গেছে!");
+          setErrorMessage("রুমটি ইতিমধ্যেই পূর্ণ হয়ে গেছে!");
           return;
         }
 
@@ -931,14 +931,23 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLocalPlayerIdState(clientId);
         localPlayerIdRef.current = clientId;
 
-        setErrorMessage(`রুমে প্রবেশের অনুরোধ পাঠানো হচ্ছে...`);
-
-        // Send Join Request to Host
-        await sendJoinRequest(formattedCode, {
+        // Directly register player in the room state
+        const newPlayer: Player = {
           id: clientId,
-          name: playerName.trim() || `Player-${clientId.slice(0, 4)}`,
+          name: playerName.trim() || `Player ${existingState.players.length + 1}`,
           avatarIndex: Math.floor(Math.random() * 6),
-        });
+          isHost: false,
+          isConnected: true,
+        };
+
+        const updatedPlayers = [...existingState.players, newPlayer];
+        await updateRoomPlayers(formattedCode, updatedPlayers);
+
+        // Optimistically update local view
+        setGameState({ ...existingState, players: updatedPlayers });
+        setConnectionStatus("connected");
+        setErrorMessage(null);
+        playClickSound();
 
         // Start client heartbeat
         sendHeartbeat(formattedCode, clientId).catch(console.error);
@@ -946,10 +955,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sendHeartbeat(formattedCode, clientId).catch(console.error);
         }, 3500);
 
-        // Listen for player state from host
-        const unsub = subscribeToPlayerState(
+        // Subscribe to live Room State updates from Firebase
+        const unsub = subscribeToRoomState(
           formattedCode,
-          clientId,
           (state) => {
             setGameState(state);
             setConnectionStatus("connected");
@@ -965,7 +973,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Auto-cleanup on window unload
         const handleUnload = () => {
           removeHeartbeat(formattedCode, clientId);
-          pushAction(formattedCode, { type: "JOIN_ROOM" as any, playerId: clientId, type_override: "PLAYER_LEFT" } as any);
+          pushAction(formattedCode, {
+            type: "JOIN_ROOM" as any,
+            playerId: clientId,
+            type_override: "PLAYER_LEFT",
+          } as any);
         };
         window.addEventListener("beforeunload", handleUnload);
       } catch (err: any) {
@@ -990,7 +1002,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await deleteRoom(code).catch(console.error);
       } else {
         await removeHeartbeat(code, myId).catch(console.error);
-        await pushAction(code, { type: "JOIN_ROOM" as any, playerId: myId, type_override: "PLAYER_LEFT" } as any).catch(console.error);
+        await pushAction(code, {
+          type: "JOIN_ROOM" as any,
+          playerId: myId,
+          type_override: "PLAYER_LEFT",
+        } as any).catch(console.error);
+
+        // Also remove player from room if in LOBBY
+        const curr = gameStateRef.current;
+        if (curr && curr.phase === "LOBBY") {
+          const filtered = curr.players.filter((p) => p.id !== myId);
+          await updateRoomPlayers(code, filtered).catch(console.error);
+        }
       }
     }
 
@@ -999,6 +1022,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     roomCodeRef.current = "";
     setLocalPlayerIdState("");
     localPlayerIdRef.current = "";
+    setLocalSecret(null);
     setConnectionStatus("disconnected");
     setIsHotseat(false);
     setErrorMessage(null);
